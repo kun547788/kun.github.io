@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>可控非弹性碰撞演示</title>
+    <style>
+        body { 
+            margin: 0; 
+            background: #FFFFFF; /* 背景颜色设置为白色 */
+        }
+        canvas { display: block; }
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(255,255,255,0.9);
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .slider-group { margin: 10px 0; }
+        label { display: block; font: 14px Arial; color: #333; }
+        button { margin-top: 10px; padding: 5px 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <div class="slider-group">
+            <label>恢复系数 (e): 
+                <input type="range" id="e" min="0" max="1" step="0.1" value="0">
+                <span id="eValue">0</span>
+            </label>
+        </div>
+        <button id="startBtn" onclick="startAnimation()">开始</button>
+        <button id="pauseBtn" onclick="pauseAnimation()">暂停</button>
+        <button onclick="resetSystem()">重置</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+<script>
+// 获取Canvas元素和上下文
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+// 初始化窗口大小
+let [width, height] = [window.innerWidth, window.innerHeight];
+let animationId = null;
+let isPaused = false;
+
+// 配置参数
+const config = {
+    m1: 2,          // 左球质量
+    m2: 1,          // 右球质量
+    v1: 15,         // 左球初速度
+    v2: -5,         // 右球初速度
+    baseRadius: 40,
+    gravity: 0.2,
+    damping: 0.95
+};
+
+// 定义小球对象
+const balls = [
+    {
+        x: width*0.2,
+        y: height/2,
+        vx: config.v1,
+        mass: config.m1,
+        color: '#FF4757',  // 红色小球
+        radius: config.baseRadius * Math.sqrt(config.m1)
+    },
+    {
+        x: width*0.8,
+        y: height/2,
+        vx: config.v2,
+        mass: config.m2,
+        color: '#5352ed',  // 蓝色小球
+        radius: config.baseRadius * Math.sqrt(config.m2)
+    }
+];
+
+// 粒子数组和碰撞类型
+let particles = [];
+let collisionType = '';
+
+// 初始化Canvas大小
+function init() {
+    canvas.width = width;
+    canvas.height = height;
+}
+window.addEventListener('resize', init);
+init();
+
+// 粒子类
+class Particle {
+    constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random()-0.5)*20;
+        this.vy = (Math.random()-0.5)*20;
+        this.life = 1.0;
+        this.color = color;
+    }
+
+    update() {
+        if(isPaused) return;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += config.gravity;
+        this.vx *= config.damping;
+        this.life -= 0.03;
+    }
+
+    draw() {
+        ctx.fillStyle = `rgba(${this.color},${this.life})`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 4, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+// 计算碰撞后的速度
+function calculateCollision(e) {
+    const {m1, m2, v1, v2} = {
+        m1: balls[0].mass,
+        m2: balls[1].mass,
+        v1: balls[0].vx,
+        v2: balls[1].vx
+    };
+
+    const v1f = ((m1 - e*m2)*v1 + (1 + e)*m2*v2)/(m1 + m2);
+    const v2f = ((1 + e)*m1*v1 + (m2 - e*m1)*v2)/(m1 + m2);
+    return {v1f, v2f};
+}
+
+// 处理碰撞逻辑
+function handleCollision(e) {
+    const {v1f, v2f} = calculateCollision(e);
+    
+    balls[0].vx = v1f;
+    balls[1].vx = v2f;
+
+    // 只有恢复系数不为1时才生成粒子
+    const eValue = parseFloat(document.getElementById('e').value);
+    if (eValue !== 1) {
+        const particleCount = e === 0 ? 100 : 50;
+        const colors = e === 0 ? ['255,71,87'] : ['83,82,237'];
+        for(let i=0; i<particleCount; i++) {
+            particles.push(new Particle(
+                (balls[0].x + balls[1].x)/2,
+                height/2,
+                colors[Math.floor(Math.random()*colors.length)]
+            ));
+        }
+    }
+}
+
+// 检测碰撞
+function detectCollision() {
+    const [a, b] = balls;
+    const distance = Math.abs(a.x - b.x);
+    const minDist = a.radius + b.radius;
+    return distance < minDist && a.vx > b.vx;
+}
+
+// 更新小球位置
+function updateBalls() {
+    if(isPaused) return;
+    
+    balls.forEach(ball => {
+        ball.x += ball.vx * 0.5;
+        if(ball.x < ball.radius || ball.x > width - ball.radius) {
+            ball.vx *= -0.7;
+            ball.x = Math.max(ball.radius, Math.min(width - ball.radius, ball.x));
+        }
+    });
+}
+
+// 绘制小球
+function drawBall(ball) {
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    
+    const gradient = ctx.createRadialGradient(
+        -ball.radius/3, 
+        -ball.radius/3, 
+        ball.radius/4,
+        0,
+        0,
+        ball.radius
+    );
+    gradient.addColorStop(0, lightenColor(ball.color, 30));
+    gradient.addColorStop(1, ball.color);
+    
+    ctx.beginPath();
+    ctx.arc(0, 0, ball.radius, 0, Math.PI*2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    
+    ctx.restore();
+}
+
+// 动画循环
+function animate() {
+    ctx.clearRect(0, 0, width, height);
+    
+    const e = parseFloat(document.getElementById('e').value);
+    
+    if(detectCollision()) {
+        handleCollision(e);
+        collisionType = e === 0 ? 
+            `完全非弹性碰撞 (v=${balls[0].vx.toFixed(1)}m/s)` : 
+            `非弹性碰撞 e=${e} (v1=${balls[0].vx.toFixed(1)}, v2=${balls[1].vx.toFixed(1)})`;
+    }
+    
+    updateBalls();
+    
+    particles.forEach((p, i) => {
+        p.update();
+        p.draw();
+        if(p.life <= 0) particles.splice(i, 1);
+    });
+    
+    balls.forEach(drawBall);
+    
+    ctx.fillStyle = '#000000'; // 文字颜色改为黑色
+    ctx.font = '16px Arial';
+    ctx.fillText(collisionType, 20, 40);
+    
+    if(!isPaused) {
+        animationId = requestAnimationFrame(animate);
+    }
+}
+
+// 颜色亮度调整
+function lightenColor(hex, percent) {
+    const num = parseInt(hex.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const r = (num >> 16) + amt;
+    const g = (num >> 8 & 0x00FF) + amt;
+    const b = (num & 0x0000FF) + amt;
+    return `#${(1 << 24 | (r < 255 ? r : 255) << 16 | (g < 255 ? g : 255) << 8 | (b < 255 ? b : 255)).toString(16).slice(1)}`;
+}
+
+// 开始动画
+function startAnimation() {
+    isPaused = false;
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('pauseBtn').disabled = false;
+    if(!animationId) {
+        animate();
+    }
+}
+
+// 暂停动画
+function pauseAnimation() {
+    isPaused = true;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('pauseBtn').disabled = true;
+    cancelAnimationFrame(animationId);
+    animationId = null;
+}
+
+// 重置系统
+function resetSystem() {
+    pauseAnimation();
+    balls[0].x = width*0.2;
+    balls[1].x = width*0.8;
+    balls[0].vx = config.v1;
+    balls[1].vx = config.v2;
+    particles = [];
+    collisionType = '';
+    document.getElementById('e').value = 0;
+    document.getElementById('eValue').textContent = 0;
+}
+
+// 滑块事件监听
+document.getElementById('e').addEventListener('input', (e) => {
+    document.getElementById('eValue').textContent = e.target.value;
+});
+
+// 初始状态
+pauseAnimation();
+</script>
+</body>
+</html>
